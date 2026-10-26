@@ -1,10 +1,48 @@
 from decimal import Decimal
+from datetime import date
 
 from rest_framework import serializers
 
 from apps.domain_validation import validate_care_log
 
-from .models import CareLog, FeedRecord, MedicineRecord
+from .models import CareLog, CareSchedule, FeedRecord, MedicineRecord
+
+
+def get_care_alert_classification(schedule, today=None):
+    if schedule.status in {CareSchedule.Status.COMPLETED, CareSchedule.Status.CANCELLED}:
+        return None
+    delta = (schedule.scheduled_date - (today or date.today())).days
+    if delta < 0:
+        return "overdue"
+    if delta == 0:
+        return "due today"
+    if delta <= 7:
+        return "due soon"
+    return "scheduled-not-yet-due"
+
+
+class CareScheduleSerializer(serializers.ModelSerializer):
+    alert_classification = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CareSchedule
+        fields = ["id", "herd", "activity", "scheduled_date", "status", "alert_classification"]
+
+    def get_alert_classification(self, obj):
+        return get_care_alert_classification(obj)
+
+    def validate_activity(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("activity is required.")
+        return value
+
+    def validate(self, attrs):
+        instance = self.instance or CareSchedule()
+        for name, value in attrs.items():
+            setattr(instance, name, value)
+        instance.full_clean()
+        return attrs
 
 
 class CareLogSerializer(serializers.ModelSerializer):

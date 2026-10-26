@@ -296,6 +296,71 @@ class ChatEndpointTests(TestCase):
         provider.assert_not_called()
         collect.assert_not_called()
 
+    def test_care_schedule_direct_and_followup_never_use_care_log_or_provider(self):
+        history = [
+            {"role": "user", "content": "Lịch chăm sóc của đàn hiện nay là gì?"},
+            {"role": "assistant", "content": "Nhật ký giả không phải lịch."},
+        ]
+        for question, prior in (("Lịch chăm sóc của đàn là gì?", []), ("Còn cái đó thì sao?", history), ("Còn lịch đó thì sao?", history), ("Còn lịch đó của đàn CHAT-001 thì sao?", history)):
+            with self.subTest(question=question), \
+                    patch("apps.ai.chat.collect_chat_facts") as collect, \
+                    patch("apps.ai.chat.get_configured_provider") as provider, \
+                    patch("apps.ai.chat._herd_matches") as matches:
+                response = self.post_chat(question, history=prior)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("/care-schedules/", response.json()["answer"])
+            collect.assert_not_called()
+            provider.assert_not_called()
+            matches.assert_not_called()
+
+    def test_mixed_care_log_and_future_schedule_request_uses_schedule_guidance(self):
+        with patch("apps.ai.chat._herd_matches") as matches, \
+                patch("apps.ai.chat.collect_chat_facts") as collect, \
+                patch("apps.ai.chat.get_configured_provider") as provider:
+            response = self.post_chat("Nhật ký chăm sóc và lịch chăm sóc sắp tới của đàn CHAT-001 là gì?")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("/care-schedules/", response.json()["answer"])
+        matches.assert_not_called()
+        collect.assert_not_called()
+        provider.assert_not_called()
+
+    def test_care_schedule_follow_up_chain_with_named_herd_stays_on_schedule(self):
+        history = [
+            {"role": "user", "content": "Lịch chăm sóc của đàn là gì?"},
+            {"role": "assistant", "content": "Chatbot hiện chưa tra cứu lịch chăm sóc."},
+            {"role": "user", "content": "Còn lịch đó của đàn CHAT-001 thì sao?"},
+            {"role": "assistant", "content": "Chatbot hiện chưa tra cứu lịch chăm sóc."},
+        ]
+        with patch("apps.ai.chat._herd_matches") as matches, \
+                patch("apps.ai.chat.collect_chat_facts") as collect, \
+                patch("apps.ai.chat.get_configured_provider") as provider:
+            response = self.post_chat("Còn cái đó thì sao?", history=history)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("/care-schedules/", response.json()["answer"])
+        matches.assert_not_called()
+        collect.assert_not_called()
+        provider.assert_not_called()
+
+    def test_recorded_care_log_question_still_uses_care_source(self):
+        provider = self.fake_provider()
+        with patch("apps.ai.chat.get_configured_provider", return_value=provider):
+            response = self.post_chat("Nhật ký chăm sóc đã ghi nhận của đàn CHAT-001 là gì?")
+        self.assertEqual(response.status_code, 200)
+        provider.generate.assert_called_once()
+        self.assertIn("care", provider.generate.call_args.args[0].context["sources"])
+
+    def test_off_topic_after_care_schedule_stays_rejected_before_queries(self):
+        history = [{"role": "user", "content": "Lịch chăm sóc của đàn là gì?"}]
+        with patch("apps.ai.chat.collect_chat_facts") as collect, \
+                patch("apps.ai.chat.get_configured_provider") as provider, \
+                patch("apps.ai.chat._herd_matches") as matches:
+            response = self.post_chat("Giá vàng hôm nay bao nhiêu?", history=history)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("ngoài phạm vi", response.json()["answer"])
+        collect.assert_not_called()
+        provider.assert_not_called()
+        matches.assert_not_called()
+
     def test_follow_ups_about_just_counted_herds_return_database_identities(self):
         Herd.objects.create(
             code="CHAT-002", name="Trang trại khác", animal_type="cattle",

@@ -10,6 +10,8 @@ ICONS = {"dashboard", "herds", "animals", "animal-groups", "pens", "care", "feed
 
 @register.inclusion_tag("management/icon.html")
 def farm_icon(name):
+    if name == "care-schedules":
+        name = "care"
     return {"icon_name": name if name in ICONS else "herds"}
 
 

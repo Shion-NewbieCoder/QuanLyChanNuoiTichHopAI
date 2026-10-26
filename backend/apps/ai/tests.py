@@ -7,7 +7,7 @@ from datetime import date, timedelta
 
 from apps.herds.models import Herd
 from apps.growth.models import GrowthRecord
-from apps.care.models import CareLog, FeedRecord, MedicineRecord
+from apps.care.models import CareLog, CareSchedule, FeedRecord, MedicineRecord
 from apps.vaccinations.models import VaccinationRecord
 from apps.vaccinations.models import VaccineSchedule
 from apps.users.roles import ROLE_EMPLOYEE, ROLE_MANAGEMENT, ROLE_TECHNICIAN
@@ -206,6 +206,45 @@ class ReminderApiTests(TestCase):
             response = self.post(self.users[ROLE_MANAGEMENT], payload)
             self.assertEqual(response.status_code, 400)
             self.assertEqual(response.json()["error_code"], "validation_error")
+
+    @patch("apps.ai.reminders.get_configured_provider")
+    def test_care_only_vaccine_only_both_and_empty_are_scoped_and_transient(self, factory):
+        provider = FakeProvider()
+        factory.return_value = provider
+        other = Herd.objects.create(code="REM-2", name="Other", animal_type="cattle", management_mode="group", quantity=1, status="active")
+        day = date.today()
+        care = CareSchedule.objects.create(herd=self.herd, activity="Vệ sinh chuồng", scheduled_date=day + timedelta(days=8))
+        CareSchedule.objects.create(herd=other, activity="Other herd secret", scheduled_date=day)
+        CareSchedule.objects.create(herd=self.herd, activity="Completed", scheduled_date=day, status="completed")
+        vaccine = VaccineSchedule.objects.create(target=self.herd, vaccine="Vaccine A", scheduled_date=day + timedelta(days=1))
+        before = list(CareSchedule.objects.order_by("pk").values())
+        role = self.users[ROLE_MANAGEMENT]
+        care_only = self.post(role, {"scope": "herd", "target_id": self.herd.pk, "start_date": (day + timedelta(days=8)).isoformat(), "end_date": (day + timedelta(days=8)).isoformat()})
+        self.assertEqual(care_only.json()["result"]["source_count"], 1)
+        request = provider.requests[-1]
+        self.assertEqual(request.prompt_version, "reminders-v4")
+        self.assertEqual(request.context["vaccine_schedules"], [])
+        self.assertEqual(request.context["care_schedules"], [{
+            "herd_id": self.herd.pk, "activity": "Vệ sinh chuồng", "scheduled_date": (day + timedelta(days=8)).isoformat(),
+            "status": "scheduled", "alert_classification": "scheduled-not-yet-due",
+        }])
+        vaccine_only = self.post(role, {"scope": "herd", "target_id": self.herd.pk, "start_date": (day + timedelta(days=1)).isoformat(), "end_date": (day + timedelta(days=1)).isoformat()})
+        self.assertEqual(vaccine_only.json()["result"]["source_count"], 1)
+        self.assertEqual(provider.requests[-1].context["care_schedules"], [])
+        both = self.post(role, {"scope": "herd", "target_id": self.herd.pk})
+        self.assertEqual(both.json()["result"]["source_count"], 2)
+        self.assertEqual(len(provider.requests[-1].context["vaccine_schedules"]), 1)
+        self.assertEqual(len(provider.requests[-1].context["care_schedules"]), 1)
+        self.assertNotIn("Other herd secret", str(provider.requests[-1].context))
+        empty = self.post(role, {"scope": "herd", "target_id": self.herd.pk, "start_date": (day + timedelta(days=2)).isoformat(), "end_date": (day + timedelta(days=2)).isoformat()})
+        self.assertEqual(empty.json()["result"], {"text": "", "source_count": 0})
+        self.assertEqual(len(provider.requests), 3)
+        self.assertEqual(factory.call_count, 3)
+        self.assertEqual(list(CareSchedule.objects.order_by("pk").values()), before)
+        care.refresh_from_db()
+        vaccine.refresh_from_db()
+        self.assertEqual(care.status, "scheduled")
+        self.assertEqual(vaccine.status, "scheduled")
 
 
 class HerdSummaryApiTests(TestCase):

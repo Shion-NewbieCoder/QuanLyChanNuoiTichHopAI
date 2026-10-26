@@ -1,7 +1,7 @@
 """Presentation metadata; business contracts remain owned by API viewsets."""
 from dataclasses import dataclass
 
-from apps.care.views import CareLogViewSet, FeedRecordViewSet, MedicineRecordViewSet
+from apps.care.views import CareLogViewSet, CareScheduleViewSet, FeedRecordViewSet, MedicineRecordViewSet
 from apps.growth.views import GrowthRecordViewSet
 from apps.herds.views import AnimalGroupViewSet, AnimalViewSet, HerdViewSet
 from apps.pens.views import PenViewSet
@@ -60,7 +60,9 @@ RESOURCES = {
         Resource("animal-groups", "Nhóm vật nuôi", AnimalGroupViewSet, ("code", "name", "herd", "quantity", "status")),
         Resource("pens", "Chuồng trại", PenViewSet, ("code", "name", "location", "herd", "animal_group", "animal", "status"),
                  "Chọn đúng một đối tượng: đàn, nhóm vật nuôi hoặc cá thể. Để trống hai lựa chọn còn lại."),
-        Resource("care", "Chăm sóc", CareLogViewSet, ("herd", "recorded_at", "activity", "notes"), "Nhật ký chăm sóc được ghi nhận cho đàn vật nuôi."),
+        Resource("care", "Nhật ký chăm sóc", CareLogViewSet, ("herd", "recorded_at", "activity", "notes"), "Nhật ký chăm sóc được ghi nhận cho đàn vật nuôi."),
+        Resource("care-schedules", "Lịch chăm sóc", CareScheduleViewSet, ("herd", "activity", "scheduled_date", "status", "alert_classification"),
+                 "Cảnh báo theo ngày được tính khi xem; trạng thái lịch đã lưu không tự thay đổi."),
         Resource("feed", "Thức ăn", FeedRecordViewSet, ("herd", "recorded_at", "feed_type", "quantity")),
         Resource("medicine", "Thuốc", MedicineRecordViewSet, ("herd", "recorded_at", "medicine", "dose")),
         Resource("vaccines", "Vaccine", VaccineScheduleViewSet, ("target", "vaccine", "scheduled_date", "status", "alert_classification"),

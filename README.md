@@ -75,7 +75,7 @@ Chi tiết kết quả và giới hạn kiểm chứng: [PORTABLE_DEMO_REPORT.md
 - API nhật ký chăm sóc, thức ăn và thuốc.
 - API lịch vaccine, bản ghi tiêm, tăng trưởng, sinh sản và xuất bán.
 - Thống kê tăng trưởng, chi phí, tỷ lệ hao hụt và doanh thu suy ra từ dữ liệu nguồn.
-- AI nhắc lịch vaccine, tóm tắt đàn và báo cáo tăng trưởng.
+- AI nhắc lịch vaccine và chăm sóc, tóm tắt đàn và báo cáo tăng trưởng.
 - Chatbot hỏi đáp dữ liệu chăn nuôi, là phần mở rộng theo yêu cầu bổ sung của giảng viên.
 - Django Dashboard tại `/dashboard/`.
 - Giao diện Django đầy đủ cho danh sách, chi tiết, thêm, sửa và xác nhận xóa
@@ -93,7 +93,8 @@ không cần chạy React/Vite:
 | Tổng quan | `/dashboard/` |
 | Đàn / Cá thể / Nhóm | `/herds/`, `/animals/`, `/animal-groups/` |
 | Chuồng trại | `/pens/` |
-| Chăm sóc / Thức ăn / Thuốc | `/care/`, `/feed/`, `/medicine/` |
+| Nhật ký chăm sóc / Lịch chăm sóc | `/care/`, `/care-schedules/` |
+| Thức ăn / Thuốc | `/feed/`, `/medicine/` |
 | Lịch vaccine / Lần tiêm | `/vaccines/`, `/vaccination-records/` |
 | Tăng trưởng / Sinh sản / Xuất bán | `/growth/`, `/reproduction/`, `/sales/` |
 | Thống kê / AI | `/statistics/`, `/ai/` |
@@ -101,7 +102,7 @@ không cần chạy React/Vite:
 Các mục nghiệp vụ có nút **Thêm bản ghi**, **Xem**, **Sửa**, **Xóa** theo quyền.
 Xóa cần xác nhận bằng POST; dữ liệu đang được tham chiếu không bị xóa.
 Form chuồng yêu cầu đúng một đối tượng đàn/nhóm/cá thể. Form giữ giá trị và
-hiển thị lỗi khi dữ liệu không hợp lệ. Trạng thái vaccine có danh mục cố định;
+hiển thị lỗi khi dữ liệu không hợp lệ. Trạng thái vaccine và lịch chăm sóc có danh mục cố định;
 các trường văn bản tự do khác giữ nguyên hợp đồng hiện có.
 
 Trang danh sách gửi `search`, exact filters và `ordering` đến bộ lọc backend
@@ -279,7 +280,7 @@ Phân quyền được kiểm tra ở backend; việc ẩn nút trên giao diệ
 
 ## Chức năng AI
 
-Ba chức năng AI trong đề gốc là **AI Reminder** (nhắc lịch vaccine), **AI Herd Summary**
+Ba chức năng AI trong đề gốc là **AI Reminder** (nhắc lịch chăm sóc và tiêm phòng), **AI Herd Summary**
 (tóm tắt đàn) và **AI Growth Report** (báo cáo tăng trưởng). Chatbot hỏi đáp dữ liệu chăn nuôi
 là phần mở rộng theo yêu cầu bổ sung của giảng viên, tách biệt với ba chức năng đó.
 
@@ -293,6 +294,11 @@ nêu rõ; câu trả lời chỉ mang tính tham khảo, không chẩn đoán, k
 Chat không ghi tin nhắn/câu trả lời vào database và không thay đổi business data; hội thoại chỉ
 tồn tại tạm thời trên trang hiện tại.
 
+Lịch chăm sóc được nhập tại `/care-schedules/` theo đàn, hoạt động, ngày dự kiến và trạng thái;
+cảnh báo theo ngày chỉ được tính khi xem. Mục `/care/` lưu nhật ký đã thực hiện. Chatbot hiện
+chưa tra cứu lịch chăm sóc; với câu hỏi rõ về lịch, chatbot hướng dẫn mở màn lịch hoặc dùng
+**Nhắc lịch**. Reminder dùng cả lịch vaccine và lịch chăm sóc đã lưu; không tự tạo lịch từ nhật ký.
+
 Các endpoint hiện có:
 
 ```text
@@ -302,7 +308,7 @@ POST /api/ai/growth-report
 POST /api/ai/chat
 ```
 
-AI chỉ nhận factual data đã được giảm thiểu theo contract và quyền người dùng. Output chỉ dùng để trình bày, không thay đổi business record, không ghi lịch sử AI vào database và luôn qua validation/safety boundary. `source_count`, các metric tăng trưởng và phân loại lịch vaccine do application kiểm soát, không do AI quyết định.
+AI chỉ nhận factual data đã được giảm thiểu theo contract và quyền người dùng. Output chỉ dùng để trình bày, không thay đổi business record, không ghi lịch sử AI vào database và luôn qua validation/safety boundary. `source_count`, các metric tăng trưởng và phân loại lịch vaccine/chăm sóc do application kiểm soát, không do AI quyết định.
 
 Project có thể khởi động, chạy dashboard, seed và tests khi chưa cấu hình provider. Regression tests dùng fake/injected provider và không gọi mạng. `seed_demo` không gọi AI.
 
@@ -312,7 +318,7 @@ Cấu hình primary provider qua environment: `AI_PROVIDER`, `OPENROUTER_API_KEY
 
 AI chỉ cung cấp thông tin tham khảo, không thay thế bác sĩ thú y/kỹ sư chăn nuôi. Kết quả là transient, không ghi đè dữ liệu nghiệp vụ. Live inference không được bảo đảm luôn thành công: cấu hình, giới hạn provider, timeout hoặc response không hợp lệ được xử lý bằng lỗi an toàn.
 
-Minh chứng thử nghiệm **V1 → V2 → V3**, gồm kết quả và giới hạn thực tế, nằm tại [KT3_AI_PROMPT_EXPERIMENTS.md](KT3_AI_PROMPT_EXPERIMENTS.md). Đánh giá prompt KT3 này chỉ áp dụng cho ba chức năng gốc; không phải kết quả đánh giá chatbot. Các phiên bản production đã được chọn và được sinh viên phê duyệt: **Reminder V2, Herd Summary V3, Growth Report V2**.
+Minh chứng thử nghiệm **V1 → V2 → V3**, gồm kết quả và giới hạn thực tế, nằm tại [KT3_AI_PROMPT_EXPERIMENTS.md](KT3_AI_PROMPT_EXPERIMENTS.md). Đánh giá prompt KT3 này chỉ áp dụng cho ba chức năng gốc trước khi mở rộng lịch chăm sóc; không phải kết quả đánh giá chatbot hay Reminder V4. Phiên bản hiện tại trong source: **Reminder V4, Herd Summary V3, Growth Report V2**. Reminder V4 chỉ được kiểm thử offline bằng provider giả trong lượt mở rộng này; chưa có kiểm thử AI live mới.
 
 ## React/Vite scaffold
 

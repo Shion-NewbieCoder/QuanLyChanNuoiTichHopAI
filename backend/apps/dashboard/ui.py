@@ -21,6 +21,8 @@ from apps.ai.serializers import GrowthReportRequestSerializer, HerdSummaryReques
 from apps.users.permissions import ROLE_ACTIONS, RoleActionPermission
 from apps.users.roles import get_user_role
 from apps.vaccinations.serializers import get_alert_classification
+from apps.care.models import CareSchedule
+from apps.care.serializers import get_care_alert_classification
 from .forms import AIFeatureForm, ResourceForm, add_validation_errors
 from .resources import ALERT_LABELS, LABELS, RESOURCES
 from .views import build_dashboard_context
@@ -73,7 +75,7 @@ def navigation(request):
 
 def display_cell(obj, name):
     if name == "alert_classification":
-        raw = get_alert_classification(obj)
+        raw = get_care_alert_classification(obj) if isinstance(obj, CareSchedule) else get_alert_classification(obj)
         return {"value": ALERT_LABELS.get(raw, "—"), "badge": True, "raw": raw or ""}
     value = getattr(obj, name)
     if name == "status" and obj._meta.get_field(name).choices:
@@ -141,7 +143,7 @@ def resource_screen(request, slug, action="list", pk=None):
     context["object"] = obj
     if action == "detail":
         names = ["id"] + resource.fields
-        if slug == "vaccines":
+        if slug in ("vaccines", "care-schedules"):
             names += ["alert_classification"]
         context["details"] = [(LABELS[name], display_cell(obj, name)) for name in names]
         return render(request, "management/detail.html", context)

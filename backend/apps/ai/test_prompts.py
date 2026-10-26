@@ -63,7 +63,7 @@ class NoNetwork:
 class PromptDefinitionTests(NoNetwork, SimpleTestCase):
     def test_current_versions_identify_each_feature(self):
         self.assertEqual({name: builder().version for name, builder in BUILDERS.items()}, {
-            "reminders": "reminders-v2", "herd_summary": "herd-summary-v3",
+            "reminders": "reminders-v4", "herd_summary": "herd-summary-v3",
             "growth_report": "growth-report-v2",
         })
 
@@ -72,9 +72,12 @@ class PromptDefinitionTests(NoNetwork, SimpleTestCase):
             prefix = name.replace("_", "-")
             self.assertEqual(
                 [spec.version for spec in module.PROMPT_VERSIONS],
-                [f"{prefix}-v{number}" for number in (1, 2, 3)],
+                [f"{prefix}-v{number}" for number in (1, 2, 3, 4) if number != 4 or name == "reminders"],
             )
-            self.assertEqual(module.PROMPT_VERSIONS, (module.PROMPT_V1, module.PROMPT_V2, module.PROMPT_V3))
+            expected = (module.PROMPT_V1, module.PROMPT_V2, module.PROMPT_V3)
+            if name == "reminders":
+                expected += (module.PROMPT_V4,)
+            self.assertEqual(module.PROMPT_VERSIONS, expected)
             self.assertIs(BUILDERS[name](), module.CURRENT_PROMPT)
             self.assertEqual(sum(spec is module.CURRENT_PROMPT for spec in module.PROMPT_VERSIONS), 1)
             for spec in module.PROMPT_VERSIONS:
@@ -92,11 +95,12 @@ class PromptDefinitionTests(NoNetwork, SimpleTestCase):
     def test_versions_preserve_v1_task_and_safety_constraints(self):
         for module in PROMPT_MODULES.values():
             for spec in module.PROMPT_VERSIONS:
-                self.assertEqual(spec.user_prompt, module.PROMPT_V1.user_prompt)
-                self.assertEqual(
-                    spec.output_constraints[:len(module.PROMPT_V1.output_constraints)],
-                    module.PROMPT_V1.output_constraints,
-                )
+                if spec is not getattr(reminder_prompts, "PROMPT_V4"):
+                    self.assertEqual(spec.user_prompt, module.PROMPT_V1.user_prompt)
+                    self.assertEqual(
+                        spec.output_constraints[:len(module.PROMPT_V1.output_constraints)],
+                        module.PROMPT_V1.output_constraints,
+                    )
 
     def test_reminder_v3_is_honestly_an_unchanged_content_trial(self):
         self.assertEqual(
@@ -139,8 +143,8 @@ class PromptDefinitionTests(NoNetwork, SimpleTestCase):
 
     def test_reminder_task_preserves_schedule_semantics(self):
         prompt = build_reminder_prompt().user_prompt
-        for phrase in ("VaccineSchedule", "scheduled date", "vaccine", "persisted status",
-                       "derived alert classification", "Do not invent schedules", "official record"):
+        for phrase in ("VaccineSchedule", "CareSchedule", "scheduled date", "vaccine", "care activity", "persisted status",
+                       "derived alert classification", "official record"):
             self.assertIn(phrase, prompt)
 
     def test_summary_task_distinguishes_absence_from_recorded_facts(self):

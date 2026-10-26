@@ -34,6 +34,10 @@ OUT_OF_SCOPE_ANSWER = (
     "Mình chỉ hỗ trợ hỏi đáp về dữ liệu chăn nuôi đã ghi nhận trong hệ thống; "
     "câu hỏi này nằm ngoài phạm vi đó hoặc yêu cầu tư vấn chuyên môn."
 )
+CARE_SCHEDULE_ANSWER = (
+    "Chatbot hiện chưa tra cứu lịch chăm sóc. Bạn có thể mở mục Lịch chăm sóc "
+    "(/care-schedules/) hoặc dùng chức năng Nhắc lịch trong AI Assistant."
+)
 
 # Matching is deterministic and happens before any source query. The chat model
 # cannot choose a model, field, filter, relation, or query.
@@ -136,6 +140,37 @@ def _is_explicitly_out_of_scope(padded_question):
 
 def _is_clear_follow_up(padded_question):
     return any(cue in padded_question for cue in FOLLOW_UP_CUES)
+
+
+def _is_care_schedule_request(question):
+    padded = f" {_normalize_question(question)} "
+    return any(phrase in padded for phrase in (
+        " lich cham soc ", " ke hoach cham soc ", " cham soc sap toi ",
+    ))
+
+
+def _is_care_schedule_follow_up_cue(padded_question):
+    return _is_clear_follow_up(padded_question) or " con lich do " in padded_question or " lich do " in padded_question
+
+
+def _is_care_schedule_follow_up(question, history):
+    padded = f" {_normalize_question(question)} "
+    if not _is_care_schedule_follow_up_cue(padded):
+        return False
+    sources = select_chat_sources(question)
+    if sources and (sources != ("herds",) or " lich " not in padded):
+        return False
+    for message in reversed(history):
+        if message["role"] != "user":
+            continue
+        prior = message["content"]
+        if _is_explicitly_out_of_scope(f" {_normalize_question(prior)} "):
+            return False
+        if _is_care_schedule_request(prior):
+            return True
+        if not _is_care_schedule_follow_up_cue(f" {_normalize_question(prior)} "):
+            return False
+    return False
 
 
 def _is_herd_count_question(question):
@@ -461,6 +496,10 @@ def _provider_failure_fallback(facts):
 
 
 def answer_chat_question(user, question, history=()):
+    if _is_explicitly_out_of_scope(f" {_normalize_question(question)} "):
+        return {"answer": OUT_OF_SCOPE_ANSWER, "notice": CHAT_NOTICE, "source_count": 0}
+    if _is_care_schedule_request(question) or _is_care_schedule_follow_up(question, history):
+        return {"answer": CARE_SCHEDULE_ANSWER, "notice": CHAT_NOTICE, "source_count": 0}
     if _is_greeting(question):
         return {
             "answer": "Chào bạn! Mình có thể tra cứu dữ liệu đàn, cá thể, chăm sóc, thức ăn, vaccine và các mục đã ghi nhận trong hệ thống.",

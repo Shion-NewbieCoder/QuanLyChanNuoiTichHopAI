@@ -46,6 +46,7 @@ class ManagementUITests(TestCase):
             "animal-groups": dict(code="NEW", name="Nhóm mới", herd=cls.herd.pk, quantity=4, status="active"),
             "pens": dict(code="NEW", name="Chuồng mới", location="Khu A", description="", status="active", herd=cls.herd.pk, animal="", animal_group=""),
             "care": dict(herd=cls.herd.pk, recorded_at="2026-09-08T08:15:00", activity="Vệ sinh", notes="Ghi nhận"),
+            "care-schedules": dict(herd=cls.herd.pk, activity="Vệ sinh chuồng", scheduled_date="2026-10-01", status="scheduled"),
             "feed": dict(herd=cls.herd.pk, recorded_at="2026-09-08T08:15:00", feed_type="Cỏ", quantity="12.50", notes="Ghi nhận"),
             "medicine": dict(herd=cls.herd.pk, recorded_at="2026-09-08T08:15:00", medicine="Vitamin", dose="1.25", notes="Ghi nhận"),
             "vaccines": dict(target=cls.herd.pk, vaccine="Vaccine mới", scheduled_date="2026-10-01", status="scheduled"),
@@ -79,7 +80,7 @@ class ManagementUITests(TestCase):
                 self.assertEqual(self.client.get(detail).status_code, 200)
                 self.assertEqual(self.client.get(detail + "edit/").status_code, 200)
                 payload = self.payloads[slug].copy()
-                field = "code" if "code" in payload else "vaccine" if "vaccine" in payload else "notes"
+                field = "code" if "code" in payload else "vaccine" if "vaccine" in payload else "notes" if "notes" in payload else "activity"
                 payload[field] = "Đã chỉnh sửa"
                 self.assertRedirects(self.client.post(detail + "edit/", payload), detail)
                 obj.refresh_from_db()
@@ -91,8 +92,8 @@ class ManagementUITests(TestCase):
 
     def test_role_matrix_enforced_on_screens_and_posts(self):
         records = {slug: self.create_record(slug) for slug in RESOURCES}
-        technician_writes = {"care", "feed", "medicine", "vaccines", "vaccination-records", "growth", "reproduction"}
-        employee_creates = {"care", "feed", "medicine"}
+        technician_writes = {"care", "care-schedules", "feed", "medicine", "vaccines", "vaccination-records", "growth", "reproduction"}
+        employee_creates = {"care", "care-schedules", "feed", "medicine"}
         for role in ("technician", "employee", "none"):
             self.client.force_login(self.users[role])
             for slug, resource in RESOURCES.items():
@@ -122,6 +123,18 @@ class ManagementUITests(TestCase):
             obj.refresh_from_db()
             self.assertEqual(obj.notes, payload["notes"])
             self.client.force_login(self.users["employee"])
+
+    def test_care_schedule_screen_shows_alert_and_distinct_navigation(self):
+        response = self.client.get("/care-schedules/")
+        self.assertContains(response, "Lịch chăm sóc")
+        self.assertContains(response, "Nhật ký chăm sóc")
+        self.assertContains(response, "Chưa có dữ liệu")
+        obj = self.create_record("care-schedules")
+        self.assertContains(self.client.get(f"/care-schedules/{obj.pk}/"), "Cảnh báo")
+        self.assertContains(self.client.get("/care-schedules/"), "Quá hạn")
+        self.client.force_login(self.users["employee"])
+        self.assertEqual(self.client.post(f"/care-schedules/{obj.pk}/edit/", self.payloads["care-schedules"]).status_code, 403)
+        self.assertEqual(self.client.post(f"/care-schedules/{obj.pk}/delete/").status_code, 403)
 
     def test_invalid_forms_retain_values_and_do_not_write(self):
         for slug in RESOURCES:

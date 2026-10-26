@@ -5,6 +5,8 @@ from .orchestrator import AIOrchestrator
 from .providers import get_configured_provider
 from .safety import SAFETY_NOTICE, with_safety_notice
 from .prompts.reminders import build_reminder_prompt
+from apps.care.models import CareSchedule
+from apps.care.serializers import get_care_alert_classification
 
 
 AI_NOTICE = SAFETY_NOTICE
@@ -33,10 +35,31 @@ def select_reminder_sources(scope, target_id=None, start_date=None, end_date=Non
     ]
 
 
+def select_care_reminder_sources(scope, target_id=None, start_date=None, end_date=None):
+    schedules = CareSchedule.objects.filter(status__in=[CareSchedule.Status.SCHEDULED, CareSchedule.Status.DUE])
+    if scope == "herd":
+        schedules = schedules.filter(herd_id=target_id)
+    if start_date:
+        schedules = schedules.filter(scheduled_date__gte=start_date)
+    if end_date:
+        schedules = schedules.filter(scheduled_date__lte=end_date)
+    return [
+        {
+            "herd_id": schedule.herd_id,
+            "activity": schedule.activity,
+            "scheduled_date": schedule.scheduled_date.isoformat(),
+            "status": schedule.status,
+            "alert_classification": get_care_alert_classification(schedule),
+        }
+        for schedule in schedules
+    ]
+
+
 def generate_reminders(user, scope, target_id=None, start_date=None, end_date=None):
     sources = select_reminder_sources(scope, target_id, start_date, end_date)
-    if not sources:
+    care_sources = select_care_reminder_sources(scope, target_id, start_date, end_date)
+    if not sources and not care_sources:
         return {"text": "", "source_count": 0, "notice": NO_DATA_NOTICE}
     orchestrator = AIOrchestrator(get_configured_provider())
-    response = orchestrator.run(user, build_reminder_prompt(), {"vaccine_schedules": sources})
-    return {"text": response.text, "source_count": len(sources), "notice": AI_NOTICE}
+    response = orchestrator.run(user, build_reminder_prompt(), {"vaccine_schedules": sources, "care_schedules": care_sources})
+    return {"text": response.text, "source_count": len(sources) + len(care_sources), "notice": AI_NOTICE}
