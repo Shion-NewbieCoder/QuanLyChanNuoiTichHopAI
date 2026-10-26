@@ -29,7 +29,9 @@ Không commit secret. AI live cần Internet và có thể lỗi do provider ho�
 
 Giao diện quản lý và Bootstrap dùng tài nguyên cục bộ, không cần Internet.
 AI chưa cấu hình sẽ hiển thị thông báo an toàn; không có kết quả AI giả.
-Dữ liệu portable được giữ tại `DEMO_PORTABLE/data/db.sqlite3`; sao lưu tệp này để giữ dữ liệu portable.
+Dữ liệu portable được giữ riêng tại `DEMO_PORTABLE/data/db.sqlite3`. Source và portable có thể
+dùng hai database độc lập. Xem [hướng dẫn sao lưu và khôi phục SQLite](SQLITE_BACKUP_RESTORE.md)
+để xác định đúng file, tạo snapshot an toàn và khôi phục mà không ghi đè bản sao lưu cũ.
 
 Tài khoản demo:
 
