@@ -156,3 +156,11 @@ Không có AI live test mới. KT3 prompt evaluation trước đây chỉ áp d�
 không đánh giá chatbot. Báo cáo này không khẳng định `DEMO.exe` đã được build lại hoặc kiểm chứng
 với chatbot mới; các test ở trên là kiểm tra source, không phải kiểm thử portable. Không có API key
 nào được tuyên bố là đã đóng gói vào `DEMO.exe`.
+
+## Cập nhật tài liệu FINAL-05 — 2026-10-26
+
+Các kiểm tra portable trong phần báo cáo có ngày phía trên là kết quả lịch sử cho artifact và thời điểm đã nêu; chúng không xác minh bản portable với thay đổi FINAL-02/FINAL-03. Portable chưa được build lại hoặc kiểm tra lại hiện tại. F5 hiện chạy Django source qua `tools/run_demo.py`.
+
+Ở source hiện tại, `CareSchedule` là lịch riêng với `CareLog`; Reminder dùng prompt `reminders-v4`, Herd Summary `herd-summary-v3`, Growth Report `growth-report-v2`. Chatbot truy vấn một số câu hỏi lịch bằng ORM cố định với bộ lọc ngày/trạng thái và follow-up được nhận diện; danh sách tối đa 10 dòng. Không bảo đảm hiểu mọi cách diễn đạt. Lịch sử đánh giá live V1/V2/V3 chỉ thuộc ba chức năng AI gốc; Reminder V4 chưa được kiểm chứng live và không có AI live test mới.
+
+Kết quả gần nhất được ghi nhận cho source là 459 test `apps` trong lượt FINAL-03. Helper backup/restore đạt 5 unittest riêng trong lượt FINAL-04; các suite không được cộng nếu chồng lặp. Manual evidence do sinh viên cung cấp gồm thao tác UI lịch chăm sóc FINAL-02 tại mục 8 và chatbot FINAL-03 tại mục 9 của `09_care_schedule_completion_design.md`; không phải kiểm tra portable, CRUD tổng quát hay mọi quyền. Backup/restore được hướng dẫn tại `SQLITE_BACKUP_RESTORE.md`; phép thử restore được thực hiện trên bản sao trong thư mục tạm, không phải database portable thật.

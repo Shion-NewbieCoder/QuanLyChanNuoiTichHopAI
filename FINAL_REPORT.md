@@ -133,3 +133,13 @@ chatbot. Không có AI live test mới cho chatbot trong lần cập nhật này
 chỉ áp dụng cho ba chức năng AI gốc, không phải đánh giá chatbot. Các nhận xét về provider ở mục 7
 và 9 mô tả snapshot source ngày 2026-09-08, không phải khẳng định hiện tại rằng source không có
 provider adapter.
+
+## Cập nhật tài liệu FINAL-05 — 2026-10-26
+
+Phần báo cáo gốc ở trên giữ nguyên phạm vi và kết quả tại ngày lập. Source hiện tại có `CareSchedule` riêng với nhật ký `CareLog`; Reminder hiện chọn `reminders-v4`, Herd Summary chọn `herd-summary-v3`, Growth Report chọn `growth-report-v2`. Đánh giá live V1/V2/V3 đã ghi trong lịch sử chỉ áp dụng cho ba chức năng AI gốc. Reminder V4 chưa được kiểm chứng live.
+
+Chatbot có truy vấn ORM cố định cho một số câu hỏi đàn và lịch chăm sóc. Lịch hỗ trợ các điều kiện hiện được nhận diện như hôm nay, sắp tới, quá hạn, trạng thái rõ, đếm/liệt kê và follow-up đủ rõ; mốc không hỗ trợ có thể yêu cầu làm rõ. Danh sách hiển thị tối đa 10 dòng, còn số đếm tính trên queryset đã lọc. Không bảo đảm hiểu mọi cách diễn đạt.
+
+Kết quả gần nhất được ghi nhận là `python manage.py test apps`: **459 test đạt** trong lượt FINAL-03; helper backup/restore đạt **5 unittest** trong suite riêng ở lượt FINAL-04. Đây là các suite khác nhau; không cộng suite chồng lặp. Manual evidence do sinh viên cung cấp gồm thao tác UI lịch chăm sóc FINAL-02 tại mục 8 và chatbot FINAL-03 tại mục 9 của `09_care_schedule_completion_design.md`; không suy rộng thành kiểm chứng CRUD hoặc các quyền khác. Không có AI live test mới.
+
+F5 chạy Django source qua `tools/run_demo.py`; portable là bản riêng và chưa được build lại/xác minh với các thay đổi FINAL-02/FINAL-03. Helper backup/restore được mô tả tại `SQLITE_BACKUP_RESTORE.md`; kiểm chứng restore gần nhất chỉ chạy trên bản sao trong thư mục tạm, không phải database thật.

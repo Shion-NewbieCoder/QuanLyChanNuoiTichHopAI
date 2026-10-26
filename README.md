@@ -10,6 +10,8 @@ Không cần cài Python, pip, venv, Node/npm, Docker hay quyền quản trị.
 
 **Cách A — mở trực tiếp:** vào `DEMO_PORTABLE`, double-click **DEMO.exe**.
 Không cần VS Code và không cần nhập lệnh terminal.
+Portable là bản chạy riêng; chưa được build lại hoặc xác minh với các thay đổi FINAL-02/FINAL-03.
+Nếu trình bày lịch chăm sóc và chatbot hiện tại, dùng F5 chạy Django source.
 
 **Cách B — VS Code chạy mã nguồn:** mở thư mục gốc project rồi nhấn **F5**.
 Cấu hình **Run Livestock Management (Django source)** chạy `tools/run_demo.py`
@@ -112,6 +114,24 @@ Trang danh sách gửi `search`, exact filters và `ordering` đến bộ lọc 
 services hiện có. AI trả kết quả trong trang HTML, không lưu kết quả vào CSDL;
 khi chưa cấu hình provider hoặc provider gặp lỗi, trang hiển thị thông báo an toàn.
 Trang AI Assistant có chatbot hỏi đáp dữ liệu chăn nuôi.
+
+### Trạng thái và giới hạn AI
+
+Ba chức năng AI trong đề gốc là Reminder, Herd Summary và Growth Report. Prompt hiện hành lần lượt là
+`reminders-v4`, `herd-summary-v3` và `growth-report-v2`. Bằng chứng đánh giá prompt V1/V2/V3 trước đây
+chỉ áp dụng cho ba chức năng gốc; Reminder V4 chưa được kiểm chứng live. Mọi lần gọi AI live cần provider,
+credential trong environment và Internet; provider có thể lỗi.
+
+Chatbot là phần mở rộng tra cứu dữ liệu đã lưu, không phải AI hội thoại phổ thông và không bảo đảm hiểu mọi
+cách diễn đạt. Một số câu thống kê đàn và tra cứu `CareSchedule` được backend trả trực tiếp bằng ORM, không cần
+provider. Các nhánh chat khác có thể gửi nguồn dữ liệu được phép tới AI provider theo cơ chế hiện có. Tra cứu lịch
+dùng `CareSchedule`, riêng với nhật ký `CareLog`; hiện hỗ trợ các ý định rõ như hôm nay, sắp tới, quá hạn, trạng thái
+hoàn thành/hủy, đếm, liệt kê và follow-up đủ rõ. “Sắp tới” là từ ngày mai đến hết ngày hôm nay +7 ngày, bao gồm
+hai đầu mốc. Danh sách hiển thị
+tối đa 10 dòng nhưng số đếm tính toàn bộ kết quả. Câu có mốc thời gian chưa hỗ trợ hoặc không rõ ý có thể yêu cầu
+làm rõ; chatbot không hứa xử lý mọi cách hỏi.
+
+Kịch bản demo ngắn, cùng ghi chú bước nào mới là đề xuất, nằm trong [DEMO_CHECKLIST.md](DEMO_CHECKLIST.md).
 
 CSS có bố cục desktop/tablet/mobile, bảng cuộn ngang và danh mục thu gọn trên
 màn hình nhỏ. Bootstrap 5.3.3 được lưu tại `backend/static/vendor/bootstrap/`
@@ -299,8 +319,8 @@ tồn tại tạm thời trên trang hiện tại.
 Lịch chăm sóc được nhập tại `/care-schedules/` theo đàn, hoạt động, ngày dự kiến và trạng thái;
 cảnh báo theo ngày chỉ được tính khi xem. Mục `/care/` lưu nhật ký đã thực hiện. Chatbot có thể
 tra cứu trực tiếp một số yêu cầu rõ ràng từ `CareSchedule` đã lưu, gồm lịch hôm nay, sắp tới,
-quá hạn, trạng thái hoàn thành/hủy, liệt kê và đếm. “Sắp tới” trong chat là từ ngày mai đến hết
-7 ngày sau hôm nay; câu trả lời nêu khoảng ngày cụ thể. Các câu hỏi chung hoặc chưa rõ điều kiện
+quá hạn, trạng thái hoàn thành/hủy, liệt kê và đếm. “Sắp tới” trong chat là từ ngày mai đến hết ngày hôm nay +7 ngày,
+bao gồm hai đầu mốc; câu trả lời nêu khoảng ngày cụ thể. Các câu hỏi chung hoặc chưa rõ điều kiện
 được hướng dẫn sang màn lịch hoặc **Nhắc lịch**; ngày chưa hỗ trợ như ngày mai/tháng sau sẽ được
 yêu cầu làm rõ. Nhãn kết quả nêu ngày, trạng thái và đàn đã lọc. Reminder dùng cả lịch vaccine và
 lịch chăm sóc đã lưu; không tự tạo lịch từ nhật ký.
