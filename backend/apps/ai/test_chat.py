@@ -9,7 +9,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.test import TestCase
 
-from apps.care.models import CareLog
+from apps.care.models import CareLog, CareSchedule
 from apps.herds.models import Animal, AnimalGroup, Herd
 from apps.growth.models import GrowthRecord
 from apps.pens.models import Pen
@@ -360,6 +360,279 @@ class ChatEndpointTests(TestCase):
         collect.assert_not_called()
         provider.assert_not_called()
         matches.assert_not_called()
+
+    def test_care_schedule_follow_up_does_not_cross_latest_out_of_scope_turn(self):
+        history = [
+            {"role": "user", "content": "Có lịch chăm sóc nào sắp tới của đàn CHAT-001?"},
+            {"role": "assistant", "content": "Có hai lịch."},
+            {"role": "user", "content": "Giá vàng hôm nay bao nhiêu?"},
+            {"role": "assistant", "content": "Tôi không hỗ trợ giá vàng."},
+        ]
+        with patch.object(CareSchedule.objects, "select_related") as schedules, \
+                patch("apps.ai.chat.collect_chat_facts") as collect, \
+                patch("apps.ai.chat.get_configured_provider") as provider:
+            response = self.post_chat("Còn lịch đó hôm nay thì sao?", history=history)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("/care-schedules/", response.json()["answer"])
+        schedules.assert_not_called()
+        collect.assert_not_called()
+        provider.assert_not_called()
+
+    def test_unsupported_care_schedule_time_is_not_silently_dropped(self):
+        history = [{"role": "user", "content": "Có lịch chăm sóc nào sắp tới của đàn CHAT-001?"}]
+        for question, prior in (
+            ("Liệt kê lịch chăm sóc ngày mai.", []),
+            ("Có bao nhiêu lịch chăm sóc tháng sau?", []),
+            ("Liệt kê lịch chăm sóc ngày 27/10/2026.", []),
+            ("Còn ngày mai thì sao?", history),
+            ("Còn tháng sau thì sao?", history),
+        ):
+            with self.subTest(question=question), \
+                    patch.object(CareSchedule.objects, "select_related") as schedules, \
+                    patch("apps.ai.chat.collect_chat_facts") as collect, \
+                    patch("apps.ai.chat.get_configured_provider") as provider:
+                response = self.post_chat(question, history=prior)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("hôm nay, sắp tới, quá hạn", response.json()["answer"].casefold())
+            schedules.assert_not_called()
+            collect.assert_not_called()
+            provider.assert_not_called()
+
+    def _create_schedule(self, herd, suffix, scheduled_date, status):
+        return CareSchedule.objects.create(
+            herd=herd, activity=f"Hoạt động {suffix}", scheduled_date=scheduled_date, status=status,
+        )
+
+    def test_care_schedule_chat_filters_date_boundaries_and_statuses_from_database(self):
+        second_herd = Herd.objects.create(
+            code="CHAT-002", name="Trang trại khác", animal_type="cattle",
+            management_mode="group", quantity=20, status="inactive",
+        )
+        frozen_today = date(2026, 10, 26)
+        self._create_schedule(self.herd, "overdue", date(2026, 10, 25), CareSchedule.Status.SCHEDULED)
+        self._create_schedule(self.herd, "today", frozen_today, CareSchedule.Status.DUE)
+        self._create_schedule(self.herd, "done-today", frozen_today, CareSchedule.Status.COMPLETED)
+        self._create_schedule(self.herd, "tomorrow", date(2026, 10, 27), CareSchedule.Status.SCHEDULED)
+        self._create_schedule(self.herd, "day-seven", date(2026, 11, 2), CareSchedule.Status.DUE)
+        self._create_schedule(self.herd, "day-eight", date(2026, 11, 3), CareSchedule.Status.SCHEDULED)
+        self._create_schedule(self.herd, "completed", date(2026, 10, 27), CareSchedule.Status.COMPLETED)
+        self._create_schedule(self.herd, "cancelled", date(2026, 10, 25), CareSchedule.Status.CANCELLED)
+        self._create_schedule(second_herd, "other-overdue", date(2026, 10, 24), CareSchedule.Status.DUE)
+
+        cases = (
+            ("Có lịch chăm sóc nào sắp tới?", ("Hoạt động tomorrow", "Hoạt động day-seven"),
+             ("Hoạt động day-eight", "Hoạt động completed", "Hoạt động cancelled"), 2,
+             "2026-10-27", "2026-11-02"),
+            ("Hôm nay có lịch chăm sóc nào?", ("Hoạt động today",),
+             ("Hoạt động overdue", "Hoạt động completed"), 1, "2026-10-26",
+             "nhóm scheduled/due (chưa hoàn thành, chưa hủy)"),
+            ("Lịch chăm sóc nào quá hạn?", ("Hoạt động overdue", "Hoạt động other-overdue"),
+             ("Hoạt động cancelled", "Hoạt động completed"), 2, "2026-10-26",
+             "nhóm scheduled/due (chưa hoàn thành, chưa hủy)"),
+            ("Đàn CHAT-001 có lịch chăm sóc nào đã hoàn thành?",
+             ("Hoạt động completed", "Hoạt động done-today"),
+             ("Hoạt động cancelled", "Hoạt động other-overdue"), 2,
+             "trạng thái đã thực hiện (completed)", "đàn CHAT-001"),
+            ("Lịch chăm sóc hôm nay đã hoàn thành?", ("Hoạt động done-today",),
+             ("Hoạt động today", "Hoạt động completed"), 1,
+             "ngày hôm nay (2026-10-26)", "trạng thái đã thực hiện (completed)"),
+        )
+        for question, expected, excluded, expected_count, *period in cases:
+            with self.subTest(question=question), \
+                    patch("apps.ai.chat.date") as mocked_date, \
+                    patch("apps.ai.chat.get_configured_provider") as provider, \
+                    patch("apps.ai.chat.collect_chat_facts") as collect:
+                mocked_date.today.return_value = frozen_today
+                response = self.post_chat(question)
+            self.assertEqual(response.status_code, 200)
+            answer = response.json()["answer"]
+            for activity in expected:
+                self.assertIn(activity, answer)
+            for activity in excluded:
+                self.assertNotIn(activity, answer)
+            self.assertEqual(response.json()["source_count"], expected_count)
+            if period[0]:
+                self.assertIn(period[0], answer)
+            if len(period) > 1 and period[1]:
+                self.assertIn(period[1], answer)
+            if ("sắp tới" in question or "hôm nay" in question or "quá hạn" in question) \
+                    and "hoàn thành" not in question and "hủy" not in question:
+                self.assertIn("nhóm scheduled/due (chưa hoàn thành, chưa hủy)", answer)
+            if "Đàn CHAT-001" in question:
+                self.assertIn("đàn CHAT-001 — Nông trại mẫu", answer)
+            collect.assert_not_called()
+            provider.assert_not_called()
+
+    def test_care_schedule_chat_count_all_and_named_herd_list(self):
+        second_herd = Herd.objects.create(
+            code="CHAT-002", name="Trang trại khác", animal_type="cattle",
+            management_mode="group", quantity=20, status="active",
+        )
+        frozen_today = date(2026, 10, 26)
+        self._create_schedule(self.herd, "old", date(2026, 10, 20), CareSchedule.Status.DUE)
+        self._create_schedule(self.herd, "today", frozen_today, CareSchedule.Status.SCHEDULED)
+        self._create_schedule(self.herd, "done", date(2026, 10, 21), CareSchedule.Status.COMPLETED)
+        self._create_schedule(self.herd, "cancelled", date(2026, 10, 22), CareSchedule.Status.CANCELLED)
+        self._create_schedule(second_herd, "other", date(2026, 10, 22), CareSchedule.Status.CANCELLED)
+
+        for question, expected_count, present, absent in (
+            ("Có bao nhiêu lịch chăm sóc?", 2,
+             ("Có 2 lịch", "nhóm scheduled/due (chưa hoàn thành, chưa hủy)"), ()),
+            ("Đếm toàn bộ lịch chăm sóc", 5, ("Có 5 lịch", "mọi trạng thái"), ()),
+            ("Có bao nhiêu lịch chăm sóc quá hạn?", 1,
+             ("1 lịch", "nhóm scheduled/due (chưa hoàn thành, chưa hủy)"), ("Hoạt động old",)),
+            ("Liệt kê lịch chăm sóc của đàn CHAT-001.", 4,
+             ("CHAT-001", "Hoạt động old", "Hoạt động today", "Hoạt động done", "Hoạt động cancelled"),
+             ("CHAT-002", "Hoạt động other")),
+            ("Lịch chăm sóc của đàn CHAT-001 đã hủy?", 1,
+             ("Hoạt động cancelled",), ("Hoạt động done", "Hoạt động other")),
+        ):
+            with self.subTest(question=question), \
+                    patch("apps.ai.chat.date") as mocked_date, \
+                    patch("apps.ai.chat.get_configured_provider") as provider, \
+                    patch("apps.ai.chat.collect_chat_facts") as collect:
+                mocked_date.today.return_value = frozen_today
+                response = self.post_chat(question)
+            self.assertEqual(response.status_code, 200)
+            answer = response.json()["answer"]
+            for text in present:
+                self.assertIn(text, answer)
+            for text in absent:
+                self.assertNotIn(text, answer)
+            self.assertEqual(response.json()["source_count"], expected_count)
+            collect.assert_not_called()
+            provider.assert_not_called()
+
+    def test_care_schedule_list_counts_before_display_limit(self):
+        for index in range(12):
+            self._create_schedule(
+                self.herd, f"row-{index:02d}", date(2026, 11, 1 + index), CareSchedule.Status.SCHEDULED,
+            )
+        with patch("apps.ai.chat.get_configured_provider") as provider, \
+                patch("apps.ai.chat.collect_chat_facts") as collect:
+            response = self.post_chat("Liệt kê toàn bộ lịch chăm sóc.")
+        self.assertEqual(response.status_code, 200)
+        answer = response.json()["answer"]
+        self.assertEqual(response.json()["source_count"], 12)
+        self.assertIn("Đang hiển thị 10 trên tổng 12", answer)
+        self.assertIn("Hoạt động row-09", answer)
+        self.assertNotIn("Hoạt động row-10", answer)
+        collect.assert_not_called()
+        provider.assert_not_called()
+
+    def test_care_schedule_upcoming_follow_up_can_override_date_and_herd_scope(self):
+        second_herd = Herd.objects.create(
+            code="CHAT-002", name="Trang trại khác", animal_type="cattle",
+            management_mode="group", quantity=20, status="active",
+        )
+        frozen_today = date(2026, 10, 26)
+        self._create_schedule(self.herd, "today", frozen_today, CareSchedule.Status.DUE)
+        self._create_schedule(self.herd, "tomorrow", date(2026, 10, 27), CareSchedule.Status.SCHEDULED)
+        self._create_schedule(self.herd, "done-tomorrow", date(2026, 10, 27), CareSchedule.Status.COMPLETED)
+        self._create_schedule(second_herd, "other-today", frozen_today, CareSchedule.Status.DUE)
+        history = [{"role": "user", "content": "Có lịch chăm sóc nào sắp tới của đàn CHAT-001?"}]
+
+        with patch("apps.ai.chat.date") as mocked_date, \
+                patch("apps.ai.chat.get_configured_provider") as provider, \
+                patch("apps.ai.chat.collect_chat_facts") as collect:
+            mocked_date.today.return_value = frozen_today
+            response = self.post_chat("Còn lịch đó hôm nay thì sao?", history=history)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Hoạt động today", response.json()["answer"])
+        self.assertNotIn("Hoạt động tomorrow", response.json()["answer"])
+        self.assertNotIn("Hoạt động other-today", response.json()["answer"])
+        self.assertEqual(response.json()["source_count"], 1)
+        collect.assert_not_called()
+        provider.assert_not_called()
+
+        with patch("apps.ai.chat.date") as mocked_date, \
+                patch("apps.ai.chat.get_configured_provider") as provider, \
+                patch("apps.ai.chat.collect_chat_facts") as collect:
+            mocked_date.today.return_value = frozen_today
+            response = self.post_chat("Còn lịch đó đã hoàn thành?", history=history)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Hoạt động done-tomorrow", response.json()["answer"])
+        self.assertNotIn("Hoạt động tomorrow", response.json()["answer"])
+        self.assertEqual(response.json()["source_count"], 1)
+        collect.assert_not_called()
+        provider.assert_not_called()
+
+    def test_list_follow_up_preserves_completed_filter_unless_all_is_explicit(self):
+        second_herd = Herd.objects.create(
+            code="CHAT-002", name="Trang trại khác", animal_type="cattle",
+            management_mode="group", quantity=20, status="active",
+        )
+        self._create_schedule(self.herd, "completed", date(2026, 10, 20), CareSchedule.Status.COMPLETED)
+        self._create_schedule(self.herd, "scheduled", date(2026, 10, 21), CareSchedule.Status.SCHEDULED)
+        self._create_schedule(self.herd, "cancelled", date(2026, 10, 22), CareSchedule.Status.CANCELLED)
+        self._create_schedule(second_herd, "other-completed", date(2026, 10, 20), CareSchedule.Status.COMPLETED)
+        history = [
+            {"role": "user", "content": "Đàn CHAT-001 có lịch chăm sóc nào đã hoàn thành?"},
+            {"role": "assistant", "content": "Có một lịch đã hoàn thành."},
+        ]
+
+        for question, expected_count, expected, excluded, status_label in (
+            ("Liệt kê lịch đó", 1, ("Hoạt động completed", "trạng thái đã thực hiện (completed)", "đàn CHAT-001"),
+             ("Hoạt động scheduled", "Hoạt động cancelled", "CHAT-002"), "trạng thái đã thực hiện (completed)"),
+            ("Liệt kê toàn bộ lịch đó", 3,
+             ("Hoạt động completed", "Hoạt động scheduled", "Hoạt động cancelled", "mọi trạng thái", "đàn CHAT-001"),
+             ("CHAT-002", "Hoạt động other-completed"), "mọi trạng thái"),
+        ):
+            with self.subTest(question=question), \
+                    patch("apps.ai.chat.get_configured_provider") as provider, \
+                    patch("apps.ai.chat.collect_chat_facts") as collect:
+                response = self.post_chat(question, history=history)
+            self.assertEqual(response.status_code, 200)
+            answer = response.json()["answer"]
+            self.assertEqual(response.json()["source_count"], expected_count)
+            for value in expected:
+                self.assertIn(value, answer)
+            for value in excluded:
+                self.assertNotIn(value, answer)
+            self.assertIn(status_label, answer)
+            collect.assert_not_called()
+            provider.assert_not_called()
+
+    def test_care_schedule_chat_clarifies_unknown_herd_and_empty_results_without_provider(self):
+        frozen_today = date(2026, 10, 26)
+        with patch("apps.ai.chat.date") as mocked_date, \
+                patch.object(CareSchedule.objects, "select_related") as schedule_query, \
+                patch("apps.ai.chat.get_configured_provider") as provider, \
+                patch("apps.ai.chat.collect_chat_facts") as collect:
+            mocked_date.today.return_value = frozen_today
+            response = self.post_chat("Liệt kê lịch chăm sóc của đàn UNKNOWN-HERD-99.")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Không tìm thấy đàn", response.json()["answer"])
+        schedule_query.assert_not_called()
+        collect.assert_not_called()
+        provider.assert_not_called()
+
+        Herd.objects.create(
+            code="CHAT-002", name=self.herd.name, animal_type="cattle",
+            management_mode="group", quantity=20, status="active",
+        )
+        with patch.object(CareSchedule.objects, "select_related") as schedule_query, \
+                patch("apps.ai.chat.get_configured_provider") as provider, \
+                patch("apps.ai.chat.collect_chat_facts") as collect:
+            response = self.post_chat("Liệt kê lịch chăm sóc của đàn Nông trại mẫu.")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("làm rõ", response.json()["answer"].casefold())
+        schedule_query.assert_not_called()
+        collect.assert_not_called()
+        provider.assert_not_called()
+
+        with patch("apps.ai.chat.date") as mocked_date, \
+                patch("apps.ai.chat.get_configured_provider") as provider, \
+                patch("apps.ai.chat.collect_chat_facts") as collect:
+            mocked_date.today.return_value = frozen_today
+            response = self.post_chat("Có lịch chăm sóc nào sắp tới?")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Không có lịch chăm sóc phù hợp", response.json()["answer"])
+        self.assertIn("ngày từ 2026-10-27 đến hết 2026-11-02", response.json()["answer"])
+        self.assertIn("nhóm scheduled/due (chưa hoàn thành, chưa hủy)", response.json()["answer"])
+        self.assertEqual(response.json()["source_count"], 0)
+        collect.assert_not_called()
+        provider.assert_not_called()
 
     def test_follow_ups_about_just_counted_herds_return_database_identities(self):
         Herd.objects.create(

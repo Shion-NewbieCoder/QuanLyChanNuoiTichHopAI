@@ -295,9 +295,13 @@ Chat không ghi tin nhắn/câu trả lời vào database và không thay đổi
 tồn tại tạm thời trên trang hiện tại.
 
 Lịch chăm sóc được nhập tại `/care-schedules/` theo đàn, hoạt động, ngày dự kiến và trạng thái;
-cảnh báo theo ngày chỉ được tính khi xem. Mục `/care/` lưu nhật ký đã thực hiện. Chatbot hiện
-chưa tra cứu lịch chăm sóc; với câu hỏi rõ về lịch, chatbot hướng dẫn mở màn lịch hoặc dùng
-**Nhắc lịch**. Reminder dùng cả lịch vaccine và lịch chăm sóc đã lưu; không tự tạo lịch từ nhật ký.
+cảnh báo theo ngày chỉ được tính khi xem. Mục `/care/` lưu nhật ký đã thực hiện. Chatbot có thể
+tra cứu trực tiếp một số yêu cầu rõ ràng từ `CareSchedule` đã lưu, gồm lịch hôm nay, sắp tới,
+quá hạn, trạng thái hoàn thành/hủy, liệt kê và đếm. “Sắp tới” trong chat là từ ngày mai đến hết
+7 ngày sau hôm nay; câu trả lời nêu khoảng ngày cụ thể. Các câu hỏi chung hoặc chưa rõ điều kiện
+được hướng dẫn sang màn lịch hoặc **Nhắc lịch**; ngày chưa hỗ trợ như ngày mai/tháng sau sẽ được
+yêu cầu làm rõ. Nhãn kết quả nêu ngày, trạng thái và đàn đã lọc. Reminder dùng cả lịch vaccine và
+lịch chăm sóc đã lưu; không tự tạo lịch từ nhật ký.
 
 Các endpoint hiện có:
 

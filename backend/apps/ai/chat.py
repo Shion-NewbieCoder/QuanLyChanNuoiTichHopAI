@@ -2,12 +2,12 @@
 
 import re
 import unicodedata
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db.models import Avg, Count, Max, Min, Q, Sum
 
-from apps.care.models import CareLog, FeedRecord, MedicineRecord
+from apps.care.models import CareLog, CareSchedule, FeedRecord, MedicineRecord
 from apps.growth.models import GrowthRecord
 from apps.herds.models import Animal, AnimalGroup, Herd
 from apps.pens.models import Pen
@@ -35,8 +35,13 @@ OUT_OF_SCOPE_ANSWER = (
     "câu hỏi này nằm ngoài phạm vi đó hoặc yêu cầu tư vấn chuyên môn."
 )
 CARE_SCHEDULE_ANSWER = (
-    "Chatbot hiện chưa tra cứu lịch chăm sóc. Bạn có thể mở mục Lịch chăm sóc "
-    "(/care-schedules/) hoặc dùng chức năng Nhắc lịch trong AI Assistant."
+    "Mình có thể tra cứu lịch chăm sóc đã lưu. Hãy nêu rõ thời gian (hôm nay, sắp tới, quá hạn), "
+    "trạng thái (đã hoàn thành/đã hủy), hoặc yêu cầu liệt kê tất cả. Bạn cũng có thể mở "
+    "Lịch chăm sóc (/care-schedules/) hoặc chức năng Nhắc lịch trong AI Assistant."
+)
+CARE_SCHEDULE_MIXED_ANSWER = (
+    "Câu hỏi đang gộp nhật ký chăm sóc đã ghi nhận với lịch chăm sóc. Chatbot chưa gộp hai loại "
+    "trong một câu trả lời; vui lòng hỏi riêng về lịch tại /care-schedules/ hoặc dùng Nhắc lịch."
 )
 
 # Matching is deterministic and happens before any source query. The chat model
@@ -150,7 +155,227 @@ def _is_care_schedule_request(question):
 
 
 def _is_care_schedule_follow_up_cue(padded_question):
-    return _is_clear_follow_up(padded_question) or " con lich do " in padded_question or " lich do " in padded_question
+    return _is_clear_follow_up(padded_question) or _is_care_schedule_specific_follow_up_cue(padded_question)
+
+
+def _is_care_schedule_specific_follow_up_cue(padded_question):
+    return any(phrase in padded_question for phrase in (
+        " con lich do ", " lich do ", " lich ay ", " con hom nay ", " con sap toi ",
+        " con qua han ", " con da hoan thanh ", " con da huy ",
+        " ngay mai ", " ngay kia ", " thang sau ", " thang toi ", " tuan sau ", " tuan toi ",
+    ))
+
+
+def _has_unsupported_care_schedule_time(question, padded_question):
+    unsupported_phrases = (
+        " ngay mai ", " ngay kia ", " ngay mot ", " thang nay ", " thang sau ", " thang toi ",
+        " thang truoc ", " tuan nay ", " tuan sau ", " tuan toi ", " tuan truoc ",
+        " nam nay ", " nam sau ", " nam truoc ", " dau thang ", " cuoi thang ",
+    )
+    if any(phrase in padded_question for phrase in unsupported_phrases):
+        return True
+    has_human_numeric_date = (
+        (" hom nay " not in padded_question and re.search(r"\bngay\s+\d{1,2}\b", padded_question))
+        or re.search(r"\bthang\s+\d{1,2}\b", padded_question)
+    )
+    has_explicit_numeric_date = re.search(
+        r"(?<![\w])(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/.]\d{1,2}(?:[/.]\d{2,4})?)(?![\w])",
+        question,
+    )
+    if has_human_numeric_date or has_explicit_numeric_date:
+        return True
+    return False
+
+
+def _care_schedule_constraints(question):
+    padded = f" {_normalize_question(question)} "
+    date_filters = [
+        ("upcoming", " sap toi " in padded or " sap den " in padded),
+        ("today", " hom nay " in padded),
+        ("overdue", " qua han " in padded),
+    ]
+    status_filters = [
+        ("completed", any(term in padded for term in (" hoan thanh ", " hoan tat ", " da thuc hien "))),
+        ("cancelled", any(term in padded for term in (" da huy ", " huy bo "))),
+    ]
+    count_requested = any(term in padded for term in (" bao nhieu ", " dem ", " so luong lich "))
+    list_requested = any(term in padded for term in (" liet ke ", " danh sach ", " cho xem "))
+    all_requested = any(term in padded for term in (" tat ca ", " toan bo "))
+    dates = [name for name, present in date_filters if present]
+    statuses = [name for name, present in status_filters if present]
+    return {
+        "date_filter": dates[0] if len(dates) == 1 else None,
+        "status": statuses[0] if len(statuses) == 1 else None,
+        "operation": "count" if count_requested else "list" if list_requested else None,
+        "all_requested": all_requested,
+        "unsupported_time": _has_unsupported_care_schedule_time(question, padded),
+        "ambiguous": len(dates) > 1 or len(statuses) > 1 or count_requested and list_requested,
+    }
+
+
+def _merge_care_schedule_constraints(base, override):
+    merged_status = (
+        None if override["all_requested"] and override["status"] is None
+        else override["status"] if override["status"] is not None
+        else base["status"]
+    )
+    return {
+        "date_filter": override["date_filter"] if override["date_filter"] is not None else base["date_filter"],
+        "status": merged_status,
+        "operation": override["operation"] if override["operation"] is not None else base["operation"],
+    } | {"all_requested": base["all_requested"] or override["all_requested"],
+         "unsupported_time": base["unsupported_time"] or override["unsupported_time"],
+         "ambiguous": base["ambiguous"] or override["ambiguous"]}
+
+
+def _finalize_care_schedule_query(constraints):
+    if constraints["ambiguous"] or constraints["unsupported_time"]:
+        return None
+    operation = constraints["operation"]
+    if operation is None and (constraints["date_filter"] or constraints["status"] or constraints["all_requested"]):
+        operation = "list"
+    if operation is None:
+        return None
+    return {**constraints, "operation": operation}
+
+
+def _care_schedule_query_for_question(question, history):
+    padded = f" {_normalize_question(question)} "
+    has_topic = _is_care_schedule_request(question)
+    clarify_care_follow_up = _is_care_schedule_specific_follow_up_cue(padded)
+    mentions_journal = " nhat ky " in padded or " hoat dong cham soc da ghi nhan " in padded
+    if has_topic and mentions_journal:
+        return "mixed", None
+    if has_topic:
+        direct = _finalize_care_schedule_query(_care_schedule_constraints(question))
+        if direct:
+            return "query", direct
+        if not _is_care_schedule_follow_up_cue(padded):
+            return "clarify", None
+
+    if not _is_care_schedule_follow_up_cue(padded):
+        return ("clarify", None) if has_topic else (None, None)
+    selected = select_chat_sources(question)
+    if selected and (selected != ("herds",) or " lich " not in padded):
+        return ("clarify", None) if has_topic else (None, None)
+
+    overrides = _care_schedule_constraints(question)
+    for message in reversed(history):
+        if message["role"] != "user":
+            continue
+        prior = message["content"]
+        prior_padded = f" {_normalize_question(prior)} "
+        if _is_explicitly_out_of_scope(prior_padded):
+            return ("clarify", None) if has_topic or clarify_care_follow_up else (None, None)
+        prior_has_topic = _is_care_schedule_request(prior)
+        prior_is_mixed = prior_has_topic and (
+            " nhat ky " in prior_padded or " hoat dong cham soc da ghi nhan " in prior_padded
+        )
+        if prior_is_mixed:
+            return "mixed", None
+        if prior_has_topic:
+            prior_constraints = _care_schedule_constraints(prior)
+            prior_query = _finalize_care_schedule_query(prior_constraints)
+            if prior_query:
+                query = _finalize_care_schedule_query(
+                    _merge_care_schedule_constraints(prior_query, overrides)
+                )
+                return ("query", query) if query else ("clarify", None)
+            if not prior_constraints["ambiguous"]:
+                inherited_query = _finalize_care_schedule_query(
+                    _merge_care_schedule_constraints(prior_constraints, overrides)
+                )
+                if inherited_query:
+                    return "query", inherited_query
+            if not _is_care_schedule_follow_up_cue(prior_padded):
+                return "clarify", None
+        else:
+            prior_sources = select_chat_sources(prior)
+            prior_follow_up = _is_care_schedule_follow_up_cue(prior_padded)
+            if prior_sources and (prior_sources != ("herds",) or " lich " not in prior_padded):
+                return ("clarify", None) if has_topic or clarify_care_follow_up else (None, None)
+            if not prior_follow_up:
+                return ("clarify", None) if has_topic or clarify_care_follow_up else (None, None)
+        overrides = _merge_care_schedule_constraints(_care_schedule_constraints(prior), overrides)
+    return ("clarify", None) if has_topic or clarify_care_follow_up else (None, None)
+
+
+def _query_care_schedules(question, history, query):
+    herd, herd_not_found = _resolve_chat_herd(question, history, care_schedule_follow_up=True)
+    if herd_not_found:
+        return {"answer": HERD_NOT_FOUND_ANSWER, "notice": CHAT_NOTICE, "source_count": 0}
+
+    today = date.today()
+    schedules = CareSchedule.objects.select_related("herd").all()
+    if herd is not None:
+        schedules = schedules.filter(herd=herd)
+    start_date = end_date = None
+    if query["date_filter"] == "upcoming":
+        start_date, end_date = today + timedelta(days=1), today + timedelta(days=7)
+        schedules = schedules.filter(scheduled_date__gte=start_date, scheduled_date__lte=end_date)
+    elif query["date_filter"] == "today":
+        start_date = end_date = today
+        schedules = schedules.filter(scheduled_date=today)
+    elif query["date_filter"] == "overdue":
+        start_date, end_date = None, today
+        schedules = schedules.filter(scheduled_date__lt=today)
+
+    if query["status"]:
+        schedules = schedules.filter(status=query["status"])
+    elif query["date_filter"]:
+        schedules = schedules.filter(status__in=[CareSchedule.Status.SCHEDULED, CareSchedule.Status.DUE])
+    elif query["operation"] == "count" and not query["all_requested"]:
+        schedules = schedules.filter(status__in=[CareSchedule.Status.SCHEDULED, CareSchedule.Status.DUE])
+
+    total_count = schedules.count()
+    label = _care_schedule_query_label(query, today, start_date, end_date, herd)
+    if not total_count:
+        answer = f"Không có lịch chăm sóc phù hợp với điều kiện đã hỏi ({label})."
+        return {"answer": answer, "notice": CHAT_NOTICE, "source_count": 0}
+    if query["operation"] == "count":
+        return {"answer": f"Có {total_count} lịch chăm sóc phù hợp với điều kiện đã hỏi ({label}).",
+                "notice": CHAT_NOTICE, "source_count": total_count}
+
+    rows = schedules.order_by("scheduled_date", "herd__code", "pk").values(
+        "herd__code", "herd__name", "activity", "scheduled_date", "status",
+    )[:MAX_RECORDS_PER_SOURCE]
+    entries = []
+    for row in rows:
+        status_label = dict(CareSchedule.Status.choices).get(row["status"], row["status"])
+        entries.append(
+            f"{row['herd__code']} — {row['herd__name']}; {row['activity']}; "
+            f"ngày {row['scheduled_date'].isoformat()}; trạng thái {status_label} ({row['status']})"
+        )
+    answer = f"Lịch chăm sóc phù hợp ({label}): " + " | ".join(entries)
+    if total_count > len(entries):
+        answer += f". Đang hiển thị {len(entries)} trên tổng {total_count} lịch phù hợp."
+    else:
+        answer += "."
+    return {"answer": answer, "notice": CHAT_NOTICE, "source_count": total_count}
+
+
+def _care_schedule_query_label(query, today, start_date, end_date, herd):
+    date_filter = query["date_filter"]
+    if date_filter == "upcoming":
+        date_label = f"ngày từ {start_date.isoformat()} đến hết {end_date.isoformat()}"
+    elif date_filter == "today":
+        date_label = f"ngày hôm nay ({today.isoformat()})"
+    elif date_filter == "overdue":
+        date_label = f"ngày trước {today.isoformat()}"
+    else:
+        date_label = "mọi ngày"
+    if query["status"] == "completed":
+        status_label = "trạng thái đã thực hiện (completed)"
+    elif query["status"] == "cancelled":
+        status_label = "trạng thái đã hủy (cancelled)"
+    elif query["status"]:
+        status_label = dict(CareSchedule.Status.choices).get(query["status"], query["status"])
+    elif date_filter or (query["operation"] == "count" and not query["all_requested"]):
+        status_label = "nhóm scheduled/due (chưa hoàn thành, chưa hủy)"
+    else:
+        status_label = "mọi trạng thái"
+    herd_label = f"đàn {herd.code} — {herd.name}" if herd is not None else "mọi đàn"
+    return f"{date_label}; {status_label}; {herd_label}"
 
 
 def _is_care_schedule_follow_up(question, history):
@@ -284,14 +509,15 @@ def _has_unmatched_explicit_herd(question, matches=()):
     return False
 
 
-def _resolve_chat_herd(question, history):
+def _resolve_chat_herd(question, history, *, care_schedule_follow_up=False):
     matches = _herd_matches(question)
     if _has_unmatched_explicit_herd(question, matches):
         return None, True
     if matches:
         unique = {herd.pk: herd for herd in matches}
         return (next(iter(unique.values())), False) if len(unique) == 1 else (None, True)
-    if not _is_clear_follow_up(f" {_normalize_question(question)} "):
+    follow_up_cue = _is_care_schedule_follow_up_cue if care_schedule_follow_up else _is_clear_follow_up
+    if not follow_up_cue(f" {_normalize_question(question)} "):
         return None, False
     for message in reversed(history):
         if message["role"] != "user":
@@ -306,7 +532,7 @@ def _resolve_chat_herd(question, history):
         if matches:
             unique = {herd.pk: herd for herd in matches}
             return (next(iter(unique.values())), False) if len(unique) == 1 else (None, True)
-        if not _is_clear_follow_up(prior_padded):
+        if not follow_up_cue(prior_padded):
             return None, False
     return None, False
 
@@ -498,7 +724,12 @@ def _provider_failure_fallback(facts):
 def answer_chat_question(user, question, history=()):
     if _is_explicitly_out_of_scope(f" {_normalize_question(question)} "):
         return {"answer": OUT_OF_SCOPE_ANSWER, "notice": CHAT_NOTICE, "source_count": 0}
-    if _is_care_schedule_request(question) or _is_care_schedule_follow_up(question, history):
+    care_query_kind, care_query = _care_schedule_query_for_question(question, history)
+    if care_query_kind == "mixed":
+        return {"answer": CARE_SCHEDULE_MIXED_ANSWER, "notice": CHAT_NOTICE, "source_count": 0}
+    if care_query_kind == "query":
+        return _query_care_schedules(question, history, care_query)
+    if care_query_kind == "clarify" or _is_care_schedule_request(question) or _is_care_schedule_follow_up(question, history):
         return {"answer": CARE_SCHEDULE_ANSWER, "notice": CHAT_NOTICE, "source_count": 0}
     if _is_greeting(question):
         return {
