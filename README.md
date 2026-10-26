@@ -424,4 +424,4 @@ DEPLOYMENT_STATUS: NOT_DEPLOYED
 
 ## Trạng thái quản lý mã nguồn trước khi nộp
 
-Repository Git cục bộ được khởi tạo tại đúng root dự án trong bước chuẩn bị Final Delivery ngày 2026-09-08. Snapshot hiện tại được chia thành các commit mới, có nội dung rõ ràng cho backend, frontend và tài liệu; các commit này không được trình bày như lịch sử phát triển trước đó. Chưa cấu hình hoặc xác minh Git remote/GitHub và đề bài không bắt buộc remote để chạy demo cục bộ.
+Repository Git cục bộ được khởi tạo tại đúng root dự án trong bước chuẩn bị Final Delivery ngày 2026-09-08. Snapshot hiện tại được chia thành các commit mới, có nội dung rõ ràng cho backend, frontend và tài liệu; các commit này không được trình bày như lịch sử phát triển trước đó. Repository đã được push và xác minh trên GitHub ngày 26/10/2026 tại https://github.com/Shion-NewbieCoder/QuanLyChanNuoiTichHopAI. Source và báo cáo Word có trong commit `a2920bd`. Trạng thái GitHub này không khẳng định đã hoàn tất kiểm thử chạy thử cuối.

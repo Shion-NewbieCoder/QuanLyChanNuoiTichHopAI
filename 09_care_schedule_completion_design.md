@@ -1,6 +1,6 @@
 # FINAL-01 — Thiết kế tối thiểu để hoàn thiện lịch chăm sóc
 
-> **Thiết kế đã được sinh viên phê duyệt cho FINAL-02; implementation đang ở workspace, chưa commit.** Phần 1–7 bên dưới lưu nguyên trạng phân tích và đề xuất của FINAL-01 ngày 2026-10-26; các câu “chưa triển khai/cần chốt” trong phần đó mô tả thời điểm viết thiết kế. Xem cập nhật triển khai ở mục 8. Ký hiệu **A** = đề gốc yêu cầu trực tiếp; **B** = quyết định/contract hiện hữu; **C** = đề xuất mới tại thời điểm FINAL-01.
+> **FINAL-02 đã triển khai và commit tại `e3bf36a`; FINAL-03 bổ sung chatbot tra cứu lịch chăm sóc, ghi tại mục 9.** Phần 1–7 bên dưới lưu nguyên trạng phân tích và đề xuất của FINAL-01 ngày 2026-10-26; các câu “chưa triển khai/cần chốt” trong phần đó mô tả thời điểm viết thiết kế. Xem cập nhật triển khai ở mục 8. Ký hiệu **A** = đề gốc yêu cầu trực tiếp; **B** = quyết định/contract hiện hữu; **C** = đề xuất mới tại thời điểm FINAL-01.
 
 ## 1. Trạng thái repository được quan sát
 
